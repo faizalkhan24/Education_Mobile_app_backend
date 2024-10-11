@@ -153,25 +153,21 @@ const resetPassword = async (req, res) => {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    // Check if the new password matches any of the previous passwords
     const previousPasswords = await PasswordHistory.find({ email });
     const isPasswordUsed = await Promise.all(previousPasswords.map(async (entry) => {
       return await bcrypt.compare(newPassword, entry.previousPassword);
     }));
 
-    // Check if the new password is the same as the current password
     const isCurrentPassword = await bcrypt.compare(newPassword, user.password);
 
     if (isPasswordUsed.some(Boolean) || isCurrentPassword) {
       return res.status(400).json({ message: 'This is your old password or has been used before. Please enter a new password.' });
     }
 
-    // Hash the new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
     user.password = hashedPassword;
     await user.save();
 
-    // Save the new password in the PasswordHistory model
     const newPasswordHistory = new PasswordHistory({ email, previousPassword: hashedPassword });
     await newPasswordHistory.save();
 
@@ -181,6 +177,75 @@ const resetPassword = async (req, res) => {
   }
 };
 
+const suspendUser = async (req, res) => {
+  const { role } = req.user; 
+  const { id } = req.params; 
+
+  if (role !== 'superadmin') {
+    return res.status(403).json({ message: 'Access denied. Only superadmins can suspend user accounts.' });
+  }
+
+  try {
+    const user = await User.findById(id);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    user.isActive = false;
+    await user.save();
+
+    res.status(200).json({ message: 'User account suspended successfully', user });
+  } catch (error) {
+    res.status(500).json({ message: 'Error suspending user account', error: error.message });
+  }
+};
+
+const getUserProfile = async (req, res) => {
+  try {
+    const userId = req.user.id; 
+    const user = await User.findById(userId).select('-password'); 
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: 'Error retrieving user profile', error: error.message });
+  }
+};
+
+const updateUserProfile = async (req, res) => {
+    const { id } = req.params; // Extract the user ID from the URL
+    const { name, email, profilePicture, bio } = req.body;
+    const userIdFromToken = req.user.id; // Extracted from the JWT token
+  
+    const isSuperAdmin = req.user.role === 'superadmin';
+  
+    const userToUpdate = await User.findById(id); 
+  
+    if (!userToUpdate) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+  
+    if (!isSuperAdmin && userToUpdate._id.toString() !== userIdFromToken) {
+      return res.status(403).json({ message: 'You are not authorized to update this profile' });
+    }
+  
+    userToUpdate.name = name || userToUpdate.name;
+    userToUpdate.email = email || userToUpdate.email;
+    userToUpdate.profilePicture = profilePicture || userToUpdate.profilePicture;
+    userToUpdate.bio = bio || userToUpdate.bio;
+  
+    userToUpdate.updatedBy = userIdFromToken;
+  
+    try {
+      await userToUpdate.save();
+      res.status(200).json({ message: 'Profile updated successfully', user: userToUpdate });
+    } catch (error) {
+      res.status(500).json({ message: 'Error updating profile', error: error.message });
+    }
+  };
+
 module.exports = {
   createUser,
   loginUser,
@@ -189,4 +254,7 @@ module.exports = {
   deleteUser,
   updateUserRole,
   resetPassword,
+  suspendUser,
+  getUserProfile,
+  updateUserProfile
 };
